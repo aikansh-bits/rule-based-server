@@ -41,7 +41,17 @@ export const config = {
   serviceName: process.env.SERVICE_NAME || "rule-based-server",
   serviceVersion: process.env.SERVICE_VERSION || "1.0.0",
 
-  corsOrigins: process.env.CORS_ORIGINS === "*" ? "*" : list(process.env.CORS_ORIGINS),
+  // CORS rules:
+  //   - unset / empty / "*"  -> allow any origin (permissive default for demos)
+  //   - "https://a, https://b" -> only those origins (strict allowlist)
+  // The simulation panel sends custom headers, so any deployment that locks
+  // this down must also set the matching `Access-Control-Allow-Headers` —
+  // already handled by middleware/cors.js.
+  corsOrigins: (() => {
+    const v = (process.env.CORS_ORIGINS || "").trim();
+    if (v === "" || v === "*") return "*";
+    return list(v);
+  })(),
 
   // Body parser limits. Keeping these explicit and small forces oversized-payload
   // attacks to surface as 413s before they reach the rule engine, mirroring

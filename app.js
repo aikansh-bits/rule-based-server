@@ -2,7 +2,7 @@ import express from "express";
 import { config } from "./config/index.js";
 
 import { correlationId } from "./middleware/correlationId.js";
-import { corsMiddleware } from "./middleware/cors.js";
+import { corsMiddleware, originGuard } from "./middleware/cors.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
 import { httpLogger } from "./middleware/httpLogger.js";
 import { requestContext } from "./middleware/requestContext.js";
@@ -45,6 +45,7 @@ export const buildApp = () => {
 
   app.use(correlationId);
   app.use(corsMiddleware);
+  app.use(originGuard);
   app.use(securityHeaders);
 
   app.use(express.json({ limit: config.bodyLimit }));
