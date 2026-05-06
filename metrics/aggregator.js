@@ -91,10 +91,13 @@ export const aggregateRun = (runId) => {
     }
   }
 
-  const durationSec =
-    firstTs && lastTs
-      ? Math.max(0.001, (Date.parse(lastTs) - Date.parse(firstTs)) / 1000)
-      : 0;
+  // Throughput is meaningful only when we have more than one record AND the
+  // span between first and last is non-trivial (>= 100 ms). Otherwise the
+  // ratio is dominated by the timestamp resolution and produces nonsense
+  // figures like "1000 rps from a single record". When the run is too small,
+  // we report 0 — the dashboard can show "—" instead of a fake number.
+  const spanMs = firstTs && lastTs ? Date.parse(lastTs) - Date.parse(firstTs) : 0;
+  const durationSec = rows.length >= 2 && spanMs >= 100 ? spanMs / 1000 : 0;
   const throughputRps = durationSec > 0 ? rows.length / durationSec : 0;
 
   return {
