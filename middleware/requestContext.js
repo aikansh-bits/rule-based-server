@@ -20,6 +20,7 @@ export const requestContext = (req, res, next) => {
   const headerRunId = (req.get("x-run-id") || "").trim();
   const headerGroundTruth = (req.get("x-ground-truth") || "").toLowerCase();
   const headerScenario = (req.get("x-scenario") || "").trim();
+  const headerAttackFamily = (req.get("x-attack-family") || "").toLowerCase().trim();
 
   const mode =
     allowOverride && ["rule", "ai", "hybrid"].includes(headerMode)
@@ -37,6 +38,16 @@ export const requestContext = (req, res, next) => {
     ? headerGroundTruth
     : "unknown";
 
+  // The attack family is a short label (e.g. "sqli", "xss", "brute", "scanner",
+  // "benign") used by the analyser to slice metrics per attack type. We accept
+  // any header value but normalise empty / missing to "benign" when the
+  // ground truth says legitimate, otherwise "unknown". Restricting to known
+  // labels at this layer would force the rule server to track the scenario
+  // taxonomy of the frontend, which we deliberately avoid.
+  const attackFamily =
+    headerAttackFamily ||
+    (groundTruth === "legitimate" ? "benign" : "unknown");
+
   req.ctx = {
     requestId: req.id,
     startedAt,
@@ -45,6 +56,7 @@ export const requestContext = (req, res, next) => {
     mode,
     budgetMs,
     groundTruth,
+    attackFamily,
     scenario: headerScenario || null,
     // Filled in by detection middleware:
     detection: null,

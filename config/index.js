@@ -95,6 +95,14 @@ export const config = {
       maxBytes: num(process.env.MAX_PAYLOAD_BYTES, 51_200),
     },
     ipBlocklist: list(process.env.IP_BLOCKLIST),
+
+    // Comma-separated rule IDs to omit from the engine at startup. Used to
+    // simulate an imperfect rule set for the dissertation's latency-accuracy
+    // experiment: with the four payload-regex rules removed, the ML detector
+    // has something to catch that the rule engine doesn't, which is the
+    // realistic case in production where rule coverage is never complete.
+    // Example: DISABLED_RULES=sql_injection,xss,command_injection,path_traversal
+    disabled: list(process.env.DISABLED_RULES),
   },
 
   // Connection settings for the AI-based detection server.

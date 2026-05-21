@@ -1,6 +1,10 @@
 import express from "express";
 import { listRunFiles, readRun, deleteRun, flushNow } from "../metrics/store.js";
-import { aggregateRun } from "../metrics/aggregator.js";
+import {
+  aggregateRun,
+  aggregateMatrix,
+  aggregateAttackFamily,
+} from "../metrics/aggregator.js";
 import { createResponse } from "../utils/helper.js";
 import { config } from "../config/index.js";
 
@@ -9,11 +13,13 @@ const router = express.Router();
 /**
  * Read-only metrics API consumed by the analyser frontend.
  *
- *   GET /metrics                    -> server-level metrics overview
- *   GET /metrics/runs               -> list of all runs on disk
- *   GET /metrics/runs/:id           -> raw JSONL rows for a run (paginated)
- *   GET /metrics/runs/:id/summary   -> aggregated stats for a run
- *   DEL /metrics/runs/:id           -> remove a run (off by default in prod)
+ *   GET /metrics                                  -> server-level metrics overview
+ *   GET /metrics/runs                             -> list of all runs on disk
+ *   GET /metrics/runs/:id                         -> raw JSONL rows for a run (paginated)
+ *   GET /metrics/runs/:id/summary                 -> aggregated stats for a run
+ *   GET /metrics/runs/:id/matrix                  -> per-(mode, budget) cells for the Results tab
+ *   GET /metrics/runs/:id/attack-family           -> per-(mode, family) recall heatmap data
+ *   DEL /metrics/runs/:id                         -> remove a run (off by default in prod)
  */
 
 router.get("/", (req, res) => {
@@ -75,6 +81,30 @@ router.get("/runs/:id/summary", (req, res) => {
       success: true,
       message: `Summary for ${req.params.id}`,
       data: summary,
+    }),
+  );
+});
+
+router.get("/runs/:id/matrix", (req, res) => {
+  flushNow();
+  const matrix = aggregateMatrix(req.params.id);
+  res.status(200).json(
+    createResponse({
+      success: true,
+      message: `Latency-accuracy matrix for ${req.params.id}`,
+      data: matrix,
+    }),
+  );
+});
+
+router.get("/runs/:id/attack-family", (req, res) => {
+  flushNow();
+  const heatmap = aggregateAttackFamily(req.params.id);
+  res.status(200).json(
+    createResponse({
+      success: true,
+      message: `Attack-family recall for ${req.params.id}`,
+      data: heatmap,
     }),
   );
 });

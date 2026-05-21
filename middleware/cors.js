@@ -10,8 +10,8 @@ import { logger } from "../utils/logger.js";
  *   - "https://a, https://b" -> only those origins (strict allowlist)
  *
  * The simulation panel needs to send custom headers (X-Detection-Mode,
- * X-Detection-Budget-Ms, X-Ground-Truth, X-Run-Id, X-Scenario) and read
- * X-Request-Id back, so those are explicitly listed.
+ * X-Detection-Budget-Ms, X-Ground-Truth, X-Run-Id, X-Scenario,
+ * X-Attack-Family) and read X-Request-Id back, so those are explicitly listed.
  *
  * Disallowed origins receive a clean structured 403 from `originGuard` rather
  * than a 500 from the central error handler — that way the browser shows a
@@ -39,6 +39,7 @@ export const corsMiddleware = cors({
     "x-ground-truth",
     "x-run-id",
     "x-scenario",
+    "x-attack-family",
   ],
   exposedHeaders: [
     "x-request-id",

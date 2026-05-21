@@ -12,7 +12,7 @@ import { config } from "../config/index.js";
  * the cited evidence in the dissertation. Its shape is deliberately stable:
  *   {
  *     run_id, request_id, ts, ip, method, path, endpoint_class, status,
- *     ground_truth, mode, budget_ms,
+ *     ground_truth, attack_family, mode, budget_ms,
  *     decision, decision_source, blocked,
  *     fallback_used, fallback_reason, budget_exceeded,
  *     rule: { evaluated, fired_ids, fired_count, score, latency_ms },
@@ -47,6 +47,7 @@ export const responseTimer = (req, res, next) => {
       status: res.statusCode,
 
       ground_truth: req.ctx.groundTruth,
+      attack_family: req.ctx.attackFamily || "unknown",
       mode: req.ctx.mode,
       budget_ms: req.ctx.budgetMs,
       scenario: req.ctx.scenario,
@@ -79,7 +80,9 @@ const shouldRecord = (req) => {
   if (req.path === "/" || req.path === "/health" || req.path === "/ready" || req.path === "/version") {
     return false;
   }
+  if (req.path === "/catalog") return false;
   if (req.path.startsWith("/metrics")) return false;
+  if (req.path.startsWith("/detector/state")) return false;
   return true;
 };
 

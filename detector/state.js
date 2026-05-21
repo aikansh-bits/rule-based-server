@@ -35,5 +35,19 @@ export const recordFailedLogin = (ip, now = Date.now()) => {
   getIpState(ip).loginFails.push(now);
 };
 
-/** For tests / metrics reset. */
-export const _resetState = () => ipState.clear();
+/**
+ * Drop *all* per-IP sliding-window state. Used between experiment cells so
+ * that volumetric rules (`rate_limit_per_ip`, `burst_detector`,
+ * `failed_auth_brute_force`, `endpoint_scanning`) measure each cell in
+ * isolation rather than accumulating noise across the whole sweep.
+ *
+ * Returns the number of IPs cleared, so the caller can log/expose it.
+ */
+export const clearAllIpState = () => {
+  const cleared = ipState.size;
+  ipState.clear();
+  return cleared;
+};
+
+/** Legacy alias kept for any test code that still imports the underscore name. */
+export const _resetState = clearAllIpState;

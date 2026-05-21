@@ -140,3 +140,206 @@ export const aggregateRun = (runId) => {
     },
   };
 };
+
+const round = (n, d = 4) => {
+  const f = 10 ** d;
+  return Math.round((Number(n) || 0) * f) / f;
+};
+
+/**
+ * Build the latency-vs-accuracy matrix for the dissertation's Results tab.
+ *
+ * Groups the JSONL rows by (mode, budget_ms) and, for each cell, computes the
+ * classification metrics, the per-stage latency percentiles, and the fallback
+ * rate. The shape is one flat array of cell objects so the frontend can plot
+ * any combination (Pareto curve, fallback line, latency distribution) without
+ * re-grouping.
+ *
+ * Convention: only rows that carry a definite ground truth contribute to the
+ * classification metrics. Rows with ground_truth === "unknown" still count
+ * toward the latency and fallback statistics so traffic generators that don't
+ * label their requests do not silently disappear from the system view.
+ */
+export const aggregateMatrix = (runId) => {
+  const rows = readRun(runId);
+  if (rows.length === 0) {
+    return { runId, empty: true, total: 0, cells: [] };
+  }
+
+  // key = `${mode}|${budget_ms}`
+  const groups = new Map();
+  const keyOf = (r) => `${r.mode || "unknown"}|${r.budget_ms ?? "unknown"}`;
+  const cellInit = (mode, budgetMs) => ({
+    mode,
+    budget_ms: budgetMs,
+    n: 0,
+    n_labelled: 0,
+    tp: 0,
+    fp: 0,
+    tn: 0,
+    fn: 0,
+    fallback_used: 0,
+    budget_exceeded: 0,
+    detectionLatencies: [],
+    ruleLatencies: [],
+    aiLatencies: [],
+  });
+
+  for (const r of rows) {
+    const key = keyOf(r);
+    let cell = groups.get(key);
+    if (!cell) {
+      cell = cellInit(r.mode || "unknown", r.budget_ms ?? null);
+      groups.set(key, cell);
+    }
+
+    cell.n++;
+    if (r.fallback_used) cell.fallback_used++;
+    if (r.budget_exceeded) cell.budget_exceeded++;
+
+    if (typeof r.detection_latency_ms === "number") {
+      cell.detectionLatencies.push(r.detection_latency_ms);
+    }
+    if (typeof r.rule?.latency_ms === "number") {
+      cell.ruleLatencies.push(r.rule.latency_ms);
+    }
+    if (r.ai?.called && typeof r.ai?.latency_ms === "number") {
+      cell.aiLatencies.push(r.ai.latency_ms);
+    }
+
+    if (r.ground_truth === "malicious" || r.ground_truth === "legitimate") {
+      cell.n_labelled++;
+      const blocked = r.decision === "block";
+      if (r.ground_truth === "malicious" && blocked) cell.tp++;
+      else if (r.ground_truth === "legitimate" && blocked) cell.fp++;
+      else if (r.ground_truth === "legitimate" && !blocked) cell.tn++;
+      else if (r.ground_truth === "malicious" && !blocked) cell.fn++;
+    }
+  }
+
+  // Materialise the cells into a flat array with derived metrics.
+  const cells = [];
+  for (const cell of groups.values()) {
+    const cls = classificationMetrics({
+      tp: cell.tp,
+      fp: cell.fp,
+      tn: cell.tn,
+      fn: cell.fn,
+    });
+    const detection = summarise(cell.detectionLatencies);
+    const ruleEngine = summarise(cell.ruleLatencies);
+    const aiCall = summarise(cell.aiLatencies);
+    cells.push({
+      mode: cell.mode,
+      budget_ms: cell.budget_ms,
+      n: cell.n,
+      n_labelled: cell.n_labelled,
+      // Classification metrics from cls (already rounded inside it).
+      tp: cls.tp,
+      fp: cls.fp,
+      tn: cls.tn,
+      fn: cls.fn,
+      accuracy: cls.accuracy,
+      precision: cls.precision,
+      recall: cls.recall,
+      f1: cls.f1,
+      fpr: cls.fpr,
+      fnr: cls.fnr,
+      // Operational metrics
+      fallback_rate: round(cell.n === 0 ? 0 : cell.fallback_used / cell.n),
+      budget_exceeded_rate: round(
+        cell.n === 0 ? 0 : cell.budget_exceeded / cell.n,
+      ),
+      // Latency summaries (mean / p50 / p90 / p95 / p99 / max already inside)
+      latencyMs: {
+        detection,
+        ruleEngine,
+        aiCall,
+      },
+    });
+  }
+
+  // Stable ordering: mode then budget (ascending). Helps the frontend draw
+  // line series in a predictable left-to-right sequence.
+  const MODE_ORDER = { rule: 0, hybrid: 1, ai: 2 };
+  cells.sort((a, b) => {
+    const m = (MODE_ORDER[a.mode] ?? 99) - (MODE_ORDER[b.mode] ?? 99);
+    if (m !== 0) return m;
+    return (a.budget_ms ?? 0) - (b.budget_ms ?? 0);
+  });
+
+  return { runId, total: rows.length, cellCount: cells.length, cells };
+};
+
+/**
+ * Group rows by (mode, attack_family) and compute the recall (detection rate)
+ * for each cell. Used by the Results tab's attack-family heatmap.
+ *
+ * Only rows whose `ground_truth` is "malicious" contribute, because recall is
+ * only meaningful on the positive class. Legitimate traffic ends up in a
+ * synthetic `attack_family === "benign"` column on the simulation side but we
+ * deliberately omit it here so the heatmap shows attack-detection capability
+ * cleanly without a benign distractor.
+ */
+export const aggregateAttackFamily = (runId) => {
+  const rows = readRun(runId);
+  if (rows.length === 0) {
+    return { runId, empty: true, total: 0, cells: [] };
+  }
+
+  // key = `${mode}|${family}` — each cell tracks tp and fn over malicious rows
+  const groups = new Map();
+  const families = new Set();
+  const modes = new Set();
+
+  for (const r of rows) {
+    if (r.ground_truth !== "malicious") continue;
+    const mode = r.mode || "unknown";
+    const family = r.attack_family || "unknown";
+    if (family === "benign") continue;
+    const key = `${mode}|${family}`;
+    let cell = groups.get(key);
+    if (!cell) {
+      cell = { mode, family, tp: 0, fn: 0, n: 0 };
+      groups.set(key, cell);
+    }
+    cell.n++;
+    if (r.decision === "block") cell.tp++;
+    else cell.fn++;
+    families.add(family);
+    modes.add(mode);
+  }
+
+  const cells = [];
+  for (const cell of groups.values()) {
+    const denom = cell.tp + cell.fn;
+    const recall = denom === 0 ? 0 : cell.tp / denom;
+    cells.push({
+      mode: cell.mode,
+      family: cell.family,
+      n: cell.n,
+      tp: cell.tp,
+      fn: cell.fn,
+      recall: round(recall),
+    });
+  }
+
+  // Stable ordering helps the frontend render the heatmap rows/columns in a
+  // predictable layout without re-sorting on the client.
+  const MODE_ORDER = { rule: 0, hybrid: 1, ai: 2 };
+  cells.sort((a, b) => {
+    const m = (MODE_ORDER[a.mode] ?? 99) - (MODE_ORDER[b.mode] ?? 99);
+    if (m !== 0) return m;
+    return a.family.localeCompare(b.family);
+  });
+
+  return {
+    runId,
+    total: rows.length,
+    modes: Array.from(modes).sort(
+      (a, b) => (MODE_ORDER[a] ?? 99) - (MODE_ORDER[b] ?? 99),
+    ),
+    families: Array.from(families).sort(),
+    cells,
+  };
+};

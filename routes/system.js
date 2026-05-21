@@ -3,9 +3,12 @@ import os from "node:os";
 import { config } from "../config/index.js";
 import { ruleCatalog } from "../detector/rules/index.js";
 import { aiCircuitState, pingAiServer } from "../detector/aiClient.js";
+import { clearAllIpState } from "../detector/state.js";
 import { createResponse, isoNow } from "../utils/helper.js";
+import { logger } from "../utils/logger.js";
 
 const router = express.Router();
+const log = logger.child({ component: "system" });
 
 /**
  * Liveness probe — does *not* depend on the AI server. As long as this
@@ -64,17 +67,44 @@ router.get("/version", (req, res) => {
 });
 
 /**
+ * Reset the rule engine's per-IP sliding-window state. Used by the analyser
+ * between sweep cells so volumetric rules (`rate_limit_per_ip`,
+ * `burst_detector`, ...) measure each cell in isolation. Without this, a
+ * long sweep from one client IP saturates the per-minute rate-limit rule
+ * partway through and every subsequent cell sees the rule engine block on
+ * volumetric signal alone, contaminating the per-cell F1 and FPR metrics.
+ *
+ * Exposed as POST because it mutates server state. Idempotent.
+ */
+router.post("/detector/state/reset", (req, res) => {
+  const cleared = clearAllIpState();
+  log.info("ip_state_reset", { cleared });
+  res.status(200).json(
+    createResponse({
+      success: true,
+      message: `Per-IP state cleared (${cleared} IP buckets dropped)`,
+      data: { cleared },
+      meta: { requestId: req.id, timestamp: isoNow() },
+    }),
+  );
+});
+
+/**
  * Catalog of detection capabilities. Used by the analyser frontend to render
  * which rules are configured and what their weights are, so legends/tooltips
  * stay in sync with the server without hard-coding.
  */
 router.get("/catalog", (req, res) => {
+  const disabled = ruleCatalog.filter((r) => r.disabled).map((r) => r.id);
+  const active = ruleCatalog.filter((r) => !r.disabled).map((r) => r.id);
   res.status(200).json(
     createResponse({
       success: true,
       message: "Detection catalog",
       data: {
         rules: ruleCatalog,
+        activeRules: active,
+        disabledRules: disabled,
         ruleEngine: config.ruleEngine,
         detection: {
           defaultMode: config.detection.defaultMode,
